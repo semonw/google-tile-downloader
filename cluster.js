@@ -1,8 +1,10 @@
 const cluster = require('cluster');
-const numCPUs = require('os').cpus().length;
 const path = require('path');
 const fs = require('fs');
 var format = require('string-format');
+
+//创建子进程数
+var numCPUs = require('os').cpus().length;
 
 function radians(degrees) {
     var pi = Math.PI;
@@ -98,7 +100,7 @@ if (cluster.isMaster) {
     for (var i = 0; i < numCPUs; i++) {
         cluster.fork();
     }
-    console.log('一共创建' + cluster.workers.length + ' 个进程。');
+    console.log('一共创建' + numCPUs + ' 个进程。');
 
     for (const id in cluster.workers) {
         cluster.workers[id].on('message', redispatch);
