@@ -4,6 +4,8 @@ const path = require('path');
 var request = require('superagent');
 var stream = require('stream');
 var log4js = require('log4js');
+var Promise = require('bluebird');
+
 log4js.configure({
     appenders: {
         logConsole: {
@@ -61,7 +63,8 @@ function getByBound(rootDir, minZoom, maxZoom, minX, maxX, minY, maxY) {
         var rightbottom = deg2num(minY, maxX, z)
         console.log(format('范围：{}, {}, {}, {}, {}', z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1]));
         console.log(format('共：{}, {} x {} = {} 块瓦片', z, rightbottom[0] - lefttop[0], rightbottom[1] - lefttop[1], (rightbottom[0] - lefttop[0]) * (rightbottom[1] - lefttop[1])));
-        downloadTerrainTiles(rootDir, z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1])
+        //downloadTerrainTiles(rootDir, z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1])
+        startDownloadingByBatch(rootDir, z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1]);
     }
 }
 
@@ -83,6 +86,26 @@ function downloadTerrainTiles(rootDir, zoom, startX, endX, startY, endY) {
     }
 }
 
+
+function startDownloadingByBatch(rootDir, zoom, startX, endX, startY, endY){
+    var reqs = [];
+
+    for (var x = startX; x < endX; x++) {
+        for (var y = startY; y < endY; y++) {
+            var xDir = path.join(rootDir, zoom.toString(), x.toString());
+            if (!fs.existsSync(xDir)) {
+                fs.mkdirSync(xDir);
+            }
+            reqs.push(downloadTile(rootDir, zoom, x, y));
+        }
+    }
+
+    console.log('一共发出请求 ' + reqs.length + ' 个');
+    Promise.all(reqs).then(()=>{
+        console.log('所有的请求都已经完成.......');
+    });
+}
+
 function downloadTile(rootDir, z, x, y) {
     //谷歌影像
     var tilepath = format('http://www.google.cn/maps/vt?lyrs=s@815&gl=cn&x={0}&y={1}&z={2}', x, y, z);
@@ -91,7 +114,7 @@ function downloadTile(rootDir, z, x, y) {
 
     logger.info('发出请求:' + tilepath);
     
-    request
+    return request
         .get(tilepath)
         .set({
             'User-Agent': agents[randomAgent]
