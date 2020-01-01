@@ -5,6 +5,7 @@ var request = require('superagent');
 var stream = require('stream');
 var log4js = require('log4js');
 var Promise = require('bluebird');
+const cluster = require('cluster');
 
 log4js.configure({
     appenders: {
@@ -32,7 +33,6 @@ log4js.configure({
     }
 })
 var logger = log4js.getLogger('logFile');
-
 var agents = [
     'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36',
     'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/532.5 (KHTML, like Gecko) Chrome/4.0.249.0 Safari/532.5',
@@ -44,71 +44,9 @@ var agents = [
     'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.1 (KHTML, like Gecko) Chrome/13.0.782.24 Safari/535.1'
 ]
 
-function radians(degrees) {
-    var pi = Math.PI;
-    return degrees * (pi / 180);
-}
-
-function deg2num(lat_deg, lon_deg, zoom) {
-    var lat_rad = radians(lat_deg);
-    var n = 2.0 ** zoom;
-    var xtile = Math.floor((lon_deg + 180.0) / 360.0 * n);
-    var ytile = Math.floor((1.0 - Math.log(Math.tan(lat_rad) + (1 / Math.cos(lat_rad))) / Math.PI) / 2.0 * n);
-    return [xtile, ytile];
-}
-
-function getByBound(rootDir, minZoom, maxZoom, minX, maxX, minY, maxY) {
-    for (var z = minZoom; z < maxZoom + 1; z++) {
-        var lefttop = deg2num(maxY, minX, z)
-        var rightbottom = deg2num(minY, maxX, z)
-        console.log(format('范围：{}, {}, {}, {}, {}', z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1]));
-        console.log(format('共：{}, {} x {} = {} 块瓦片', z, rightbottom[0] - lefttop[0], rightbottom[1] - lefttop[1], (rightbottom[0] - lefttop[0]) * (rightbottom[1] - lefttop[1])));
-        startDownloadingByBatch(rootDir, z, lefttop[0], rightbottom[0], lefttop[1], rightbottom[1]);
-    }
-}
-
-function getTilesOfGlobal(minzoom, maxzoom) {
-    for (var i = minzoom; i < maxzoom + 1; i++) {
-        downloadTerrainTiles(i, 0, 2 ** i, 0, 2 ** i);
-    }
-}
-
-function downloadTerrainTiles(rootDir, zoom, startX, endX, startY, endY) {
-    for (var x = startX; x < endX; x++) {
-        for (var y = startY; y < endY; y++) {
-            var xDir = path.join(rootDir, zoom.toString(), x.toString());
-            if (!fs.existsSync(xDir)) {
-                fs.mkdirSync(xDir);
-            }
-            downloadTile(rootDir, zoom, x, y);
-        }
-    }
-}
-
-function startDownloadingByBatch(rootDir, zoom, startX, endX, startY, endY) {
-    var reqs = [];
-
-    for (var x = startX; x < endX; x++) {
-        for (var y = startY; y < endY; y++) {
-            var xDir = path.join(rootDir, zoom.toString(), x.toString());
-            if (!fs.existsSync(xDir)) {
-                fs.mkdirSync(xDir);
-            }
-            reqs.push(downloadTile(rootDir, zoom, x, y));
-        }
-    }
-
-    console.log('一共发出请求 ' + reqs.length + ' 个');
-    Promise.all(reqs).then(() => {
-        console.log('所有的请求都已经完成.......');
-    });
-}
-
-
 function choice(min, max) {
     return Math.floor(Math.random() * max);
 }
-
 
 function downloadTile(rootDir, z, x, y) {
     //谷歌影像
@@ -160,34 +98,43 @@ function downloadTile(rootDir, z, x, y) {
 }
 
 
-function main() {
-    //getTilesOfGlobal(1, 4);
-    var minZoom = 13 //下载的开始级别
-    var maxZoom = 13 //下载的最大级别
-    var minX = 104.588008
-    var maxX = 105.170268
-    var minY = 32.214785
-    var maxY = 32.70365
-
-    var rootDir = path.join(process.cwd(), 'google_tiles');
-    if (!fs.existsSync(rootDir)) {
-        fs.mkdirSync(rootDir);
+var Processor = function () {};
+Processor.prototype.processReq = function (reqs) {
+    if (!reqs) {
+        logger.error('传入数据错误');
     }
 
-    for (var z = minZoom; z <= maxZoom; z++) {
-        var zDir = path.join(rootDir, z.toString());
-        if (!fs.existsSync(zDir)) {
-            fs.mkdirSync(zDir);
-        }
+    if (!Array.isArray(reqs)) {
+        logger.error('传入数据错误');
     }
 
-    var ep1 = new Date().getTime();
-    getByBound(rootDir, minZoom, maxZoom, minX, maxX, minY, maxY);
-    var ep2 = new Date().getTime();
+    let promises = [];
+    reqs.forEach(req => {
+        promises.push(downloadTile(req[0], req[1], req[2], req[3]));
+    });
 
-    console.log(ep1);
-    console.log(ep2);
-    console.log('time consumed ' + ((ep2 - ep1) / 1000) + ' s');
-}
+    console.log('一共发出请求 ' + promises.length + ' 个');
+    Promise.all(promises).then(() => {
+        console.log('请求都已经完成.....');
 
-main();
+        process.send({
+            cmd: 'result',
+            id: cluster.worker.id,
+            status: 0,
+        });
+
+    }).catch(err => {
+        status = 1;
+        console.log('发生了错误' + err);
+
+        process.send({
+            cmd: 'result',
+            id: cluster.worker.id,
+            status: 0,
+            error : err
+        });
+    });
+
+};
+
+module.exports = new Processor();
