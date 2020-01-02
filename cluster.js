@@ -5,6 +5,7 @@ var format = require('string-format');
 
 //创建子进程数
 var numCPUs = require('os').cpus().length;
+var numBatch = 100;
 
 function radians(degrees) {
     var pi = Math.PI;
@@ -51,7 +52,7 @@ function downloadTerrainTiles(rootDir, zoom, startX, endX, startY, endY) {
 function generateReqs() {
     //getTilesOfGlobal(1, 4);
     var minZoom = 0 //下载的开始级别
-    var maxZoom = 17 //下载的最大级别
+    var maxZoom = 14 //下载的最大级别
     var minX = 104.588008
     var maxX = 105.170268
     var minY = 32.214785
@@ -81,13 +82,15 @@ function generateReqs() {
 if (cluster.isMaster) {
     console.log('这里是主进程。');
     var reqs = generateReqs();
-
+    var runningBatchCount = 0;
     function redispatch(msg) {
         if (msg && msg.cmd && msg.cmd == 'result') {
+            runningBatchCount--;
             if (msg.status == 0) {
                 if (reqs && reqs.length > 0) {
-                    var batch = reqs.splice(0, 50);
+                    var batch = reqs.splice(0, numBatch);
                     cluster.workers[msg.id].send(batch);
+                    runningBatchCount++;
                     console.log('向子进程发送任务消息。');
                 }
             } else {
@@ -107,14 +110,16 @@ if (cluster.isMaster) {
     }
 
     for (const id in cluster.workers) {
-        var batch = reqs.splice(0, 50);
+        var batch = reqs.splice(0, numBatch);
         cluster.workers[id].send(batch);
+        runningBatchCount++;
         console.log('发送初始任务消息.');
     }
 
     setInterval(() => {
-        if(reqs.len == 0){
-            console.log('任务已经处理完成。');
+        console.log('当前待处理请求数量为：' + reqs.length);
+        if (reqs.length == 0 && runningBatchCount == 0) {
+            console.log('任务已经全部处理完成。');
             for (const id in cluster.workers) {
                 cluster.workers[id].kill();
             }
